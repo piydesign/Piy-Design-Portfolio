@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Air Hockey Coins</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0F1115}
+#stage{width:100%;height:100dvh;container-type:size;display:flex;align-items:center;justify-content:center;background:#0F1115}
+#game{position:relative;width:min(100cqw,200cqh);aspect-ratio:2/1;background:#14171C;border-radius:20px;box-shadow:inset 0 0 0 1px #262B33;overflow:hidden;outline:none;touch-action:none;user-select:none;-webkit-user-select:none}
+#game canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:ew-resize;border-radius:20px}
+#game i{position:absolute;inset:0;border-radius:20px;box-shadow:inset 0 0 0 1px #262B33;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="game" tabindex="0" aria-label="Air hockey coin game. Slide the bar left and right to hit the ball into coins. Arrow keys move the bar.">
+    <canvas id="cv"></canvas><i></i>
+  </div>
+</div>
+<script>
+const React = { createRef: () => ({ current: null }) };
+class DCLogic {
+  setState(o) { Object.assign(this.state, typeof o === 'function' ? o(this.state) : o); }
+}
+class Component extends DCLogic {
+  state = { score: 0, combo: 1, best: 0 }; cn = 0;
+  wrapRef = React.createRef(); canvasRef = React.createRef();
+  Wt = 500; Lt = 800; RB = 16; RP = 60; PY = 690; RS = 0;
+  ax = 250; avx = 0; aoff = 0; aerr = 0; aring = 0;
+  ball = null; trail = []; serveIn = 0.3; coins = []; texts = []; parts = []; spawnIn = 0.5; px = 250; tx = 250; pvx = 0; keys = {}; actx = null; lastTick = 0; stageFlash = 1.6; ring = 0;
+  componentDidMount() {
+    try { this.setState({ best: +localStorage.getItem('ah-best') || 0 }); } catch (e) {}
+    const cv = this.canvasRef.current, wrap = this.wrapRef.current;
+    this.ctx = cv.getContext('2d'); this.W = 0; this.H = 0; this.dpr = 1;
+    this.resize = () => {
+      const r = wrap.getBoundingClientRect(); this.dpr = Math.min(window.devicePixelRatio || 1, 2); this.W = r.width; this.H = r.height; cv.width = r.width * this.dpr; cv.height = r.height * this.dpr;
+      this.s = Math.max(0.3, Math.min(1.1, Math.min(r.width / 640, r.height / 360))); this.Wt = r.width / this.s; this.Lt = r.height / this.s; this.PY = this.Lt - 50; this.PW = r.width; this.PH = r.height;
+      this.px = Math.min(this.px, this.Wt - 60); this.tx = this.px;
+    };
+    this.ro = new ResizeObserver(this.resize); this.ro.observe(wrap); this.resize();
+    const setX = e => { const r = cv.getBoundingClientRect(); this.tx = (e.clientX - r.left) / this.s; };
+    cv.addEventListener('pointerdown', e => { setX(e); cv.setPointerCapture(e.pointerId); wrap.focus({ preventScroll: true }); });
+    cv.addEventListener('pointermove', setX);
+    this.onKey = e => { const k = e.key; const m = { ArrowLeft: 'ArrowLeft', ArrowUp: 'ArrowLeft', a: 'ArrowLeft', w: 'ArrowLeft', ArrowRight: 'ArrowRight', ArrowDown: 'ArrowRight', d: 'ArrowRight', s: 'ArrowRight' }[k]; if (m) { e.preventDefault(); this.keys[m] = e.type === 'keydown'; } };
+    wrap.addEventListener('keydown', this.onKey); wrap.addEventListener('keyup', this.onKey);
+    this.last = performance.now();
+    const loop = t => { this.raf = requestAnimationFrame(loop); const dt = Math.min((t - this.last) / 1000, 0.033); this.last = t; this.step(dt); this.draw(); };
+    this.raf = requestAnimationFrame(loop);
+  }
+  componentWillUnmount() { cancelAnimationFrame(this.raf); this.ro && this.ro.disconnect(); }
+  stage() { return 1 + Math.floor(this.state.score / 10); }
+  base() { return 480; }
+  serve() { const a = (Math.random() - 0.5) * 1.2, v = this.base() * 0.8; this.ball = { x: 80 + Math.random() * Math.max(40, this.Wt - 160), y: 110, vx: Math.sin(a) * v, vy: Math.cos(a) * v }; this.trail = []; }
+  step(dt) {
+    const W = this.Wt, RB = this.RB, RP = this.RP;
+    const kd = (this.keys.ArrowRight ? 1 : 0) - (this.keys.ArrowLeft ? 1 : 0); if (kd) this.tx = this.px + kd * 260;
+    this.tx = Math.max(RP, Math.min(W - RP, this.tx));
+    const dx = Math.max(-2800 * dt, Math.min(2800 * dt, this.tx - this.px)); this.px += dx; this.pvx = dx / Math.max(dt, 0.001);
+    this.aoff -= dt; if (this.aoff <= 0) { this.aoff = 0.5; this.aerr = (Math.random() - 0.5) * 90; }
+    const at = Math.max(RP, Math.min(W - RP, (this.ball ? this.ball.x : W / 2) + this.aerr)), asp = Math.min(300 + this.stage() * 25, 650) * dt, adx = Math.max(-asp, Math.min(asp, at - this.ax));
+    this.ax += adx; this.avx = adx / Math.max(dt, 0.001); this.aring = Math.max(0, this.aring - dt);
+    if (!this.ball) { this.serveIn -= dt; if (this.serveIn <= 0) this.serve(); }
+    const b = this.ball;
+    if (b) {
+      const n = 3, h = dt / n;
+      for (let i = 0; i < n; i++) {
+        b.x += b.vx * h; b.y += b.vy * h;
+        if (b.x < RB) { b.x = RB; b.vx = Math.abs(b.vx); this.tick(); } if (b.x > W - RB) { b.x = W - RB; b.vx = -Math.abs(b.vx); this.tick(); }
+        if (b.y < RB) { b.y = RB; b.vy = Math.abs(b.vy); this.tick(); }
+        const cx = Math.max(this.px - 40, Math.min(this.px + 40, b.x)), ex = b.x - cx, ey = b.y - this.PY, d = Math.hypot(ex, ey);
+        if (d < RB + 10 && d > 0.01) {
+          const nx = ex / d, ny = ey / d; b.x = cx + nx * (RB + 10); b.y = this.PY + ny * (RB + 10);
+          const rx = b.vx - this.pvx, ry = b.vy, vn = rx * nx + ry * ny;
+          if (vn < 0) { b.vx = rx - 2 * vn * nx + this.pvx; b.vy = ry - 2 * vn * ny; if (b.vy > -120 && ny < 0) b.vy = -300; if (ny < -0.5) { const z = (b.x - this.px) / 60, a = z < -0.5 ? -0.65 : z > 0.5 ? 0.65 : 0, sp = Math.max(Math.hypot(b.vx, b.vy), 420); b.vx = sp * Math.sin(a) + this.pvx * 0.08; b.vy = -sp * Math.cos(a); } this.tone('paddle', 0.7); this.ring = 0.25; }
+        }
+        const ax2 = Math.max(this.ax - 40, Math.min(this.ax + 40, b.x)), fx = b.x - ax2, fy = b.y - 50, fd = Math.hypot(fx, fy);
+        if (fd < RB + 10 && fd > 0.01) {
+          const nx = fx / fd, ny = fy / fd; b.x = ax2 + nx * (RB + 10); b.y = 50 + ny * (RB + 10);
+          const rx = b.vx - this.avx, ry = b.vy, vn = rx * nx + ry * ny;
+          if (vn < 0) { b.vx = rx - 2 * vn * nx + this.avx; b.vy = ry - 2 * vn * ny; if (b.vy < 120 && ny > 0) b.vy = 300; if (ny > 0.5) { const z = (b.x - this.ax) / 60, a = z < -0.5 ? -0.65 : z > 0.5 ? 0.65 : 0, sp = Math.max(Math.hypot(b.vx, b.vy), 420); b.vx = sp * Math.sin(a); b.vy = sp * Math.cos(a); } this.tone('paddle', 0.5); this.aring = 0.25; }
+        }
+        for (const c of this.coins) if (!c.hit && Math.hypot(b.x - c.x, b.y - c.y) < c.r + RB) this.collect(c);
+      }
+      const base = this.base(), sp = Math.hypot(b.vx, b.vy), tgt = Math.min(Math.max(sp, base * 0.85), base * 1.3), k = tgt + (base - tgt) * Math.min(1, 0.5 * dt); if (sp > 0) { b.vx *= k / sp; b.vy *= k / sp; }
+      this.trail.push({ x: b.x, y: b.y }); if (this.trail.length > 14) this.trail.shift();
+      if (b.y > this.Lt + RB) { this.ball = null; this.serveIn = 0.9; this.trail = []; this.tone('miss', 1); if (this.state.combo > 1) this.setState({ combo: 1 }); }
+    }
+    this.spawnIn -= dt; const cap = Math.min(3 + Math.floor(this.stage() / 3), 6);
+    if (this.spawnIn <= 0) { this.spawnIn = Math.max(0.6, 1.3 - this.stage() * 0.05); if (this.coins.filter(c => !c.hit).length < cap) this.spawnCoin(); }
+    this.coins.forEach(c => { c.age += dt; if (c.hit) c.hitT += dt; }); this.coins = this.coins.filter(c => c.age < c.life && c.hitT < 0.3);
+    this.parts.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 400 * dt; p.life -= dt; }); this.parts = this.parts.filter(p => p.life > 0);
+    this.texts.forEach(t => { t.age += dt; }); this.texts = this.texts.filter(t => t.age < 1.1);
+    this.ring = Math.max(0, this.ring - dt); this.stageFlash = Math.max(0, this.stageFlash - dt);
+  }
+  spawnCoin() {
+    for (let t = 0; t < 12; t++) {
+      const x = 60 + Math.random() * (this.Wt - 120), y = 110 + Math.random() * Math.max(30, this.PY - 220);
+      if (this.coins.every(c => Math.hypot(c.x - x, c.y - y) > 100)) { const gold = ++this.cn % 6 === 0; this.coins.push({ x, y, r: gold ? 20 : 24, gold, age: 0, life: gold ? 5 : Math.max(5, 9 - this.stage() * 0.3), hit: false, hitT: 0 }); return; }
+    }
+  }
+  collect(c) {
+    c.hit = true; const s = this.state, before = this.stage(), pts = (c.gold ? 5 : 1) * s.combo, score = s.score + pts, best = Math.max(s.best, score);
+    if (best > s.best) try { localStorage.setItem('ah-best', best); } catch (e) {}
+    this.setState({ score, best, combo: Math.min(s.combo + 1, 5) });
+    this.texts.push({ x: c.x, y: c.y - 30, t: '+' + pts, age: 0 });
+    for (let i = 0; i < 14; i++) { const a = Math.random() * 6.283, v = 80 + Math.random() * 200; this.parts.push({ x: c.x, y: c.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 80, life: 0.5 + Math.random() * 0.3 }); }
+    this.tone('coin', s.combo);
+    if (1 + Math.floor(score / 10) > before) { this.stageFlash = 1.6; setTimeout(() => this.tone('coin', 8), 120); }
+  }
+  tick() { const t = performance.now(); if (t - this.lastTick > 60) { this.lastTick = t; this.tone('wall', 0.4); } }
+  tone(kind, x) {
+    try {
+      const A = this.actx || (this.actx = new (window.AudioContext || window.webkitAudioContext)()); if (A.state === 'suspended') A.resume();
+      const o = A.createOscillator(), g = A.createGain(), t = A.currentTime; let f0, f1, ty = 'sine', vol, len;
+      if (kind === 'paddle') { f0 = 220; f1 = 110; vol = 0.2; len = 0.14; }
+      else if (kind === 'wall') { f0 = 600; f1 = 420; ty = 'triangle'; vol = 0.05; len = 0.06; }
+      else if (kind === 'miss') { f0 = 200; f1 = 70; ty = 'triangle'; vol = 0.14; len = 0.35; }
+      else { f0 = 660 * Math.pow(2, [0, 2, 4, 7, 9, 12, 14, 16][Math.min(x, 8) - 1] / 12); f1 = f0 * 1.5; vol = 0.14; len = 0.25; }
+      o.type = ty; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len * 0.5);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      o.connect(g); g.connect(A.destination); o.start(t); o.stop(t + len + 0.02);
+    } catch (e) {}
+  }
+  draw() {
+    const c = this.ctx, d = this.dpr, s = this.s, Wt = this.Wt, Lt = this.Lt, X = x => x * s, Y = y => y * s, F = '"Bricolage Grotesque", Inter, sans-serif';
+    c.setTransform(d, 0, 0, d, 0, 0); c.fillStyle = '#14171C'; c.fillRect(0, 0, this.PW, this.PH);
+    c.save(); c.setTransform(d, 0, 0, d, 0, 0);
+    const st = this.stage(), fs = Math.round(Math.max(18, 30 * s));
+    c.textBaseline = 'top'; c.textAlign = 'left'; c.fillStyle = '#fff'; c.font = '700 ' + fs + 'px ' + F; c.fillText(this.state.score, 16, 14);
+    c.textAlign = 'right'; c.fillStyle = '#5FD893'; c.font = '700 ' + Math.round(fs * 0.62) + 'px ' + F; c.fillText('Stage ' + st, this.W - 16, 20);
+    c.textAlign = 'center'; c.fillStyle = '#6B7080'; c.font = '600 ' + Math.round(fs * 0.5) + 'px ' + F; c.fillText('Best ' + this.state.best, this.W / 2, 22); c.textAlign = 'right';
+    if (this.state.combo > 1) { c.textAlign = 'left'; c.fillStyle = '#FEC84B'; c.font = '700 ' + Math.round(fs * 0.62) + 'px ' + F; c.fillText('x' + this.state.combo, 16, 14 + fs * 1.15); }
+    c.textBaseline = 'alphabetic'; c.restore();
+    // slider (inside rectangle)
+    const ty = Y(Lt - 40), x0 = X(60), x1 = X(Wt - 60), kx = X(Math.max(60, Math.min(Wt - 60, this.px)));
+    // coins
+    this.coins.forEach(k => {
+      const left = k.life - k.age, a = k.hit ? 1 - k.hitT / 0.3 : Math.min(1, left / 1.2), sc = k.hit ? 1 + k.hitT * 2 : 1 + Math.sin(k.age * 5) * 0.04, r = k.r * s * sc, x = X(k.x), y = Y(k.y);
+      c.globalAlpha = Math.max(0, a); c.save(); c.shadowColor = k.gold ? 'rgba(255,240,180,.9)' : 'rgba(247,144,9,.45)'; c.shadowBlur = k.gold ? 30 : 14;
+      const g = c.createLinearGradient(0, y - r, 0, y + r); g.addColorStop(0, k.gold ? '#FFF6D0' : '#FEC84B'); g.addColorStop(1, k.gold ? '#FEC84B' : '#F79009'); c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 6.283); c.fill(); c.restore();
+      c.strokeStyle = '#B54708'; c.lineWidth = Math.max(1.5, r * 0.1); c.beginPath(); c.arc(x, y, r * 0.66, 0, 6.283); c.stroke();
+      c.fillStyle = '#B54708'; c.fillRect(x - r * 0.06, y - r * 0.3, r * 0.12, r * 0.6); c.globalAlpha = 1;
+    });
+    c.fillStyle = '#FEC84B'; this.parts.forEach(p => { c.globalAlpha = Math.max(0, p.life * 1.8); c.beginPath(); c.arc(X(p.x), Y(p.y), Math.max(2, 4 * s), 0, 6.283); c.fill(); }); c.globalAlpha = 1;
+    this.trail.forEach((p, i) => { c.globalAlpha = i / this.trail.length * 0.3; c.fillStyle = '#3DCB7E'; c.beginPath(); c.arc(X(p.x), Y(p.y), this.RB * s * (0.4 + i / this.trail.length * 0.6), 0, 6.283); c.fill(); }); c.globalAlpha = 1;
+    if (this.ball) {
+      const b = this.ball, x = X(b.x), y = Y(b.y), r = this.RB * s;
+      const g = c.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r); g.addColorStop(0, '#fff'); g.addColorStop(0.7, '#F1F2F4'); g.addColorStop(1, '#CFD2D9');
+      c.save(); c.shadowColor = 'rgba(255,255,255,.35)'; c.shadowBlur = 12; c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 6.283); c.fill(); c.restore();
+      c.strokeStyle = '#2DB86C'; c.lineWidth = Math.max(1, r * 0.14); c.beginPath(); c.arc(x, y, r * 0.4, 0.4, 5.6); c.stroke();
+    }
+    const px = X(this.px), py = Y(this.PY), pw = 120 * s * (1 + this.ring * 0.3), ph = 20 * s * (1 + this.ring * 0.3);
+    c.fillStyle = '#14171C'; c.strokeStyle = '#6B7080'; c.lineWidth = Math.max(2, 3 * s); c.beginPath(); c.roundRect(px - pw / 2, py - ph / 2, pw, ph, ph / 2); c.fill(); c.stroke();
+    const qw = 120 * s * (1 + this.aring * 0.3), qh = 20 * s * (1 + this.aring * 0.3), qx = X(this.ax), qy = Y(50);
+    c.beginPath(); c.roundRect(qx - qw / 2, qy - qh / 2, qw, qh, qh / 2); c.fill(); c.stroke();
+    c.lineWidth = Math.max(1.5, 2 * s); c.beginPath(); [[px, py, ph], [qx, qy, qh]].forEach(m => [-1, 1].forEach(sg => { c.moveTo(m[0] + sg * 30 * s, m[1] - m[2] * 0.22); c.lineTo(m[0] + sg * 30 * s, m[1] + m[2] * 0.22); })); c.stroke();
+    c.setTransform(d, 0, 0, d, 0, 0); c.textAlign = 'center'; c.font = '700 ' + Math.round(Math.max(16, 30 * s)) + 'px ' + F;
+    this.texts.forEach(t => { const k = t.age / 1.1; c.globalAlpha = 1 - k; c.fillStyle = '#FEC84B'; c.fillText(t.t, X(t.x), Y(t.y) - k * 50 * s); }); c.globalAlpha = 1;
+    if (this.stageFlash > 0) { const a = Math.min(1, this.stageFlash / 0.5); c.globalAlpha = a; c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.font = '700 ' + Math.round(Math.max(32, 64 * s)) + 'px ' + F; c.fillText('Stage ' + st, this.W / 2, this.H * 0.4); c.globalAlpha = 1; c.textBaseline = 'alphabetic'; }
+  }
+  renderVals() { return { wrapRef: this.wrapRef, canvasRef: this.canvasRef }; }
+}
+
+const game = new Component();
+game.wrapRef.current = document.getElementById('game');
+game.canvasRef.current = document.getElementById('cv');
+game.componentDidMount();
+</script>
+</body>
+</html>
